@@ -1,0 +1,155 @@
+"""OpenAI 兼容 provider —— 一套代码覆盖 OpenAI / DeepSeek / vLLM 等。
+
+为什么先做这个：它们都提供 ``POST /chat/completions`` + SSE 流式响应，
+接口形状一致，换 ``base_url`` 就能换服务商。第一版用它把循环跑通，
+后面再加 Anthropic 实现来验证 Provider 抽象是否真的中立。
+"""
+from __future__ import annotations
+
+import json
+import os
+from typing import Any, AsyncIterator
+
+import httpx
+
+from ..events import Event, EventKind
+from ..messages import Message
+from .base import ModelConfig, ProviderError
+
+DEFAULT_BASE_URL = "https://api.openai.com/v1"
+
+
+def to_openai_messages(messages: list[Message]) -> list[dict[str, Any]]:
+    """规范 Message → OpenAI messages 数组。
+
+    这是本层存在意义的直接体现：翻译集中在一个纯函数里，
+    想验证对不对，直接拿它做单元测试，不用发网络请求。
+    """
+    out: list[dict[str, Any]] = []
+
+    for msg in messages:
+        if msg.role in ("system", "user"):
+            out.append({"role": msg.role, "content": msg.text})
+
+        elif msg.role == "assistant":
+            item: dict[str, Any] = {
+                "role": "assistant",
+                # OpenAI 允许 content 为 null（纯工具调用时）
+                "content": msg.text or None,
+            }
+            if msg.tool_uses:
+                item["tool_calls"] = [
+                    {
+                        "id": tu.id,
+                        "type": "function",
+                        "function": {
+                            "name": tu.name,
+                            # 注意：OpenAI 要求 arguments 是**字符串**，不是对象
+                            "arguments": json.dumps(tu.input, ensure_ascii=False),
+                        },
+                    }
+                    for tu in msg.tool_uses
+                ]
+            out.append(item)
+
+        elif msg.role == "tool":
+            # 一个 tool_call_id 对应一条 tool 消息 —— 多个结果要拆成多条
+            for block in msg.content:
+                out.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": block.tool_use_id,  # type: ignore[union-attr]
+                        "content": block.content,  # type: ignore[union-attr]
+                    }
+                )
+
+    return out
+
+
+class OpenAICompatibleProvider:
+    """基于 httpx 的 OpenAI 兼容流式实现。"""
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        client: httpx.AsyncClient | None = None,
+        timeout: float = 120.0,
+    ) -> None:
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY") or ""
+        self.base_url = (
+            base_url or os.environ.get("OPENAI_BASE_URL") or DEFAULT_BASE_URL
+        ).rstrip("/")
+        # 允许注入 client：测试时用 MockTransport，生产时用默认实现
+        self._client = client or httpx.AsyncClient(timeout=timeout)
+
+    async def aclose(self) -> None:
+        await self._client.aclose()
+
+    async def stream(
+        self,
+        messages: list[Message],
+        *,
+        config: ModelConfig,
+    ) -> AsyncIterator[Event]:
+        payload: dict[str, Any] = {
+            "model": config.model,
+            "messages": to_openai_messages(messages),
+            "stream": True,
+        }
+        if config.temperature is not None:
+            payload["temperature"] = config.temperature
+        if config.max_tokens is not None:
+            payload["max_tokens"] = config.max_tokens
+
+        headers = {"Content-Type": "application/json"}
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
+
+        url = f"{self.base_url}/chat/completions"
+
+        async with self._client.stream(
+            "POST", url, json=payload, headers=headers
+        ) as resp:
+            if resp.status_code >= 400:
+                body = (await resp.aread()).decode("utf-8", "replace")
+                raise ProviderError(
+                    f"HTTP {resp.status_code} from {url}: {body[:500]}"
+                )
+
+            async for line in resp.aiter_lines():
+                for event in _parse_sse_line(line):
+                    yield event
+
+
+def _parse_sse_line(line: str) -> list[Event]:
+    """解析一行 SSE。
+
+    厂商把流切成一行行 ``data: {...}``，我们只关心内容增量；
+    ``[DONE]`` 之后没有内容。空行、注释行（以 ``:`` 开头）直接忽略。
+    """
+    line = line.strip()
+    if not line or not line.startswith("data:"):
+        return []
+
+    data = line[len("data:") :].strip()
+    if data == "[DONE]":
+        return []
+
+    try:
+        chunk = json.loads(data)
+    except json.JSONDecodeError as exc:
+        raise ProviderError(f"无法解析流式响应: {data[:200]}") from exc
+
+    # 有些兼容实现会在流里塞 error 对象
+    if "error" in chunk:
+        raise ProviderError(f"provider 返回错误: {chunk['error']}")
+
+    events: list[Event] = []
+    for choice in chunk.get("choices") or []:
+        delta = choice.get("delta") or {}
+        text = delta.get("content")
+        if text:
+            events.append(Event(EventKind.ASSISTANT, {"text": text}))
+    return events
