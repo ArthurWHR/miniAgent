@@ -52,3 +52,23 @@ uv run miniagent "2*(3+4) 等于多少？"
 ```
 
 > 当前阶段只支持单轮问答；多轮会话在阶段 3 的 session 持久化中实现。
+
+### 切换 provider
+
+```bash
+# Anthropic（Claude）
+export ANTHROPIC_API_KEY=sk-ant-xxx
+uv run miniagent --provider anthropic "2*(3+4) 等于多少？"
+
+# 或用环境变量设置默认 provider
+export MINIAGENT_PROVIDER=anthropic
+```
+
+两个 provider 共用同一套核心（`agent.py` / `tools.py` / `messages.py`），
+协议差异全部收敛在 `core/providers/` 里。
+
+一致性验收（不联网，用 MockTransport 模拟两家 SSE）：
+
+```bash
+uv run python tests/provider_consistency.py
+```

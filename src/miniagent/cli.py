@@ -19,13 +19,24 @@ from typing import TextIO
 from .builtin_tools import CALCULATOR
 from .core.agent import Agent
 from .core.events import Event, EventKind
-from .core.providers import ModelConfig, OpenAICompatibleProvider, ProviderError
+from .core.providers import (
+    AnthropicProvider,
+    ModelConfig,
+    OpenAICompatibleProvider,
+    ProviderError,
+)
 from .core.tools import ToolRegistry
 
 DEFAULT_SYSTEM_PROMPT = (
     "你是一个通用助手。需要算术时调用 calculator 工具，不要心算。"
     "工具返回错误时，根据错误信息调整后重试，或向用户说明原因。"
 )
+
+# provider -> (API key 环境变量, 默认模型)
+PROVIDER_DEFAULTS = {
+    "openai": ("OPENAI_API_KEY", "gpt-4o-mini"),
+    "anthropic": ("ANTHROPIC_API_KEY", "claude-sonnet-5-5"),
+}
 
 
 class ConsoleRenderer:
@@ -83,14 +94,20 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("prompt", help="要发给 agent 的问题")
     parser.add_argument(
+        "--provider",
+        choices=tuple(PROVIDER_DEFAULTS),
+        default=os.environ.get("MINIAGENT_PROVIDER", "openai"),
+        help="模型服务商（默认取 MINIAGENT_PROVIDER，否则 openai）",
+    )
+    parser.add_argument(
         "--model",
-        default=os.environ.get("MINIAGENT_MODEL", "gpt-4o-mini"),
-        help="模型名（默认取 MINIAGENT_MODEL，否则 gpt-4o-mini）",
+        default=None,
+        help="模型名（默认取 MINIAGENT_MODEL，否则按 provider 选择）",
     )
     parser.add_argument(
         "--base-url",
         default=None,
-        help="OpenAI 兼容服务的 base URL（默认取 OPENAI_BASE_URL）",
+        help="服务商 base URL（OpenAI 取 OPENAI_BASE_URL，Anthropic 取 ANTHROPIC_BASE_URL）",
     )
     parser.add_argument("--temperature", type=float, default=None)
     parser.add_argument("--max-turns", type=int, default=10)
@@ -112,25 +129,30 @@ async def _run(agent: Agent, prompt: str, renderer: ConsoleRenderer) -> int:
 
 
 async def _async_main(args: argparse.Namespace) -> int:
-    if not os.environ.get("OPENAI_API_KEY"):
+    key_env, default_model = PROVIDER_DEFAULTS[args.provider]
+    if not os.environ.get(key_env):
         print(
-            "缺少环境变量 OPENAI_API_KEY。\n"
+            f"缺少环境变量 {key_env}。\n"
             "例如：\n"
-            "  export OPENAI_API_KEY=sk-xxx\n"
-            "  export OPENAI_BASE_URL=https://api.deepseek.com/v1   # 可选\n"
-            "  uv run miniagent --model deepseek-v4-pro '2*(3+4) 等于多少？'",
+            f"  export {key_env}=xxx\n"
+            f"  uv run miniagent --provider {args.provider} '2*(3+4) 等于多少？'",
             file=sys.stderr,
         )
         return 2
 
-    provider = OpenAICompatibleProvider(base_url=args.base_url)
+    if args.provider == "anthropic":
+        provider = AnthropicProvider(base_url=args.base_url)
+    else:
+        provider = OpenAICompatibleProvider(base_url=args.base_url)
+
+    model = args.model or os.environ.get("MINIAGENT_MODEL") or default_model
     registry = ToolRegistry()
     registry.register(CALCULATOR)
 
     agent = Agent(
         provider=provider,
         config=ModelConfig(
-            model=args.model,
+            model=model,
             temperature=args.temperature,
         ),
         tools=registry,

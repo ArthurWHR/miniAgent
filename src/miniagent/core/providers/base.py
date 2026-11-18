@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import AsyncIterator, Protocol, Sequence
+from typing import Any, AsyncIterator, Protocol, Sequence
 
 from ..events import Event
 from ..messages import Message
@@ -52,3 +52,25 @@ class Provider(Protocol):
         config: ModelConfig,
         tools: Sequence[Tool] | None = None,
     ) -> AsyncIterator[Event]: ...
+
+
+def parse_tool_arguments(raw: str) -> tuple[dict[str, Any], str | None]:
+    """把流式累积出的参数字符串解析成 dict。
+
+    所有 provider 共用这一份实现 —— 这是**规范层**的行为，不该各家写一遍。
+    解析失败不抛异常：把错误信息作为数据返回，让 agent 把它喂回模型。
+    """
+    if not raw.strip():
+        return {}, None
+
+    import json
+
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return {}, f"工具参数不是合法 JSON: {exc}"
+
+    if not isinstance(parsed, dict):
+        return {}, f"工具参数必须是 JSON 对象，收到 {type(parsed).__name__}"
+
+    return parsed, None

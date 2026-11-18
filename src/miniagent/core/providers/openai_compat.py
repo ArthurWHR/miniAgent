@@ -18,7 +18,7 @@ import httpx
 from ..events import Event, EventKind
 from ..messages import Message
 from ..tools import Tool
-from .base import ModelConfig, ProviderError
+from .base import ModelConfig, ProviderError, parse_tool_arguments
 
 DEFAULT_BASE_URL = "https://api.openai.com/v1"
 
@@ -168,7 +168,7 @@ class OpenAICompatibleProvider:
         # 流结束，产出完整的工具调用（可能一次多个）
         for index in sorted(pending):
             slot = pending[index]
-            arguments, parse_error = _parse_arguments(slot["arguments"])
+            arguments, parse_error = parse_tool_arguments(slot["arguments"])
             yield Event(
                 EventKind.TOOL_CALL,
                 {
@@ -220,23 +220,3 @@ def _accumulate_tool_call(pending: dict[int, dict[str, str]], call: dict[str, An
         slot["name"] = function["name"]
     if function.get("arguments"):
         slot["arguments"] += function["arguments"]
-
-
-def _parse_arguments(raw: str) -> tuple[dict[str, Any], str | None]:
-    """把累积后的参数字符串解析成 dict。
-
-    解析失败**不抛异常**：把错误信息装进事件，让模型知道"你给的 JSON 不合法"，
-    它可以自行重试。这比直接中断整个对话更符合 agent 的恢复哲学。
-    """
-    if not raw.strip():
-        return {}, None
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        return {}, f"工具参数不是合法 JSON: {exc}"
-
-    if not isinstance(parsed, dict):
-        return {}, f"工具参数必须是 JSON 对象，收到 {type(parsed).__name__}"
-
-    return parsed, None

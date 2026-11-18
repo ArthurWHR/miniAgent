@@ -117,7 +117,7 @@ miniAgent/
 | 阶段 | 主题 | 学 pi 的什么 | 交付物 | 状态 |
 |---|---|---|---|---|
 | **0** | 最小循环 + 事件流 | `pi-agent-core` | 事件、消息模型、Provider(最小)、工具(最小)、循环、CLI | ✅ 完成 |
-| **1** | Provider 抽象 | `pi-ai` | Provider Protocol，接第二家 provider 验证可插拔 | ⬜ |
+| **1** | Provider 抽象 | `pi-ai` | Provider Protocol，接第二家 provider 验证可插拔 | ✅ 完成 |
 | **2** | 工具系统 | `RunTool` / `Approve` | 注册表、Pydantic schema、多工具并行、per-call approve、错误成事件 | ⬜ |
 | **3** | 上下文管理 | `CompactConversation` | Transcript、输出截断、compact、count_tokens、session、重试、取消 | ⬜ |
 | **4** | 可扩展性 | skills / extensions | 生命周期钩子、skills(md+yaml)、extensions 注册工具 | ⬜ |
@@ -136,7 +136,7 @@ miniAgent/
 
 ---
 
-## 6. 阶段 0 的详细拆解（当前）
+## 6. 阶段 0 的详细拆解（已完成）
 
 > 目标：跑通一个**结构正确**的最小 agent —— 能对话、能调工具、能流式、能收尾。
 
@@ -151,10 +151,27 @@ miniAgent/
 | **0.6** | CLI 入口：把上面串起来，事件渲染到终端 | 事件驱动的好处 | ✅ 完成 |
 
 每步结束都**可运行/可验证**（0.2 可用单测验证序列化，0.3 可单独打一次模型）。
+阶段 0 已用真实模型（DeepSeek）验证：模型正确调用 `calculator`、结果回填、二次作答。
 
 ---
 
-## 7. 关键设计决策与理由
+## 7. 阶段 1 的详细拆解（当前）
+
+> 目标：证明「换模型不改核心」。新增 Anthropic provider，**核心文件零改动**。
+> 不需要真实的 Anthropic key：用 `httpx.MockTransport` 验证协议翻译即可；有 key 再实跑一次。
+
+| 小步 | 做什么 | 学什么 | 状态 |
+|---|---|---|---|
+| **1.1** | `anthropic_provider.py` 请求翻译：规范 `Message`/`Tool` → Anthropic 格式（system 拆成顶层参数、tool_result 放进 user 消息、tools 用 `input_schema`） | 两家协议的结构差异 | ✅ 完成 |
+| **1.2** | Anthropic 流式解析：`content_block_delta` / `input_json_delta` / `error` 事件，工具参数按 block index 累积 | 另一套流式协议 | ✅ 完成 |
+| **1.3** | 一致性验证：同一 `Agent` + `calculator`，两个 provider 用 MockTransport 跑，产出的规范事件序列等价 | 抽象是否真的中立（验收标准） | ✅ 完成 |
+| **1.4** | CLI `--provider openai\|anthropic`，README 更新 | 运行时切换实现 | ✅ 完成 |
+
+**验收标准（1.3）：`core/agent.py`、`core/tools.py`、`core/messages.py` 一行不改**，只是换一个构造参数。
+
+---
+
+## 8. 关键设计决策与理由
 
 | 决策 | 选择 | 理由 |
 |---|---|---|
@@ -165,20 +182,20 @@ miniAgent/
 | 第一个 provider | OpenAI 兼容（DeepSeek） | 便宜、国内直连；抽象做好后换/加 Claude 很容易 |
 | 依赖 | 最小化：`pydantic` + `httpx` | 学习阶段少一层黑盒；`fastapi/uvicorn` 留到阶段 5 |
 
+
 ---
 
-## 8. 学习方法约定
+## 9. 学习方法约定
 
 - 每次只推进**一个小步**，写完解释：对应 pi 的哪个思想、为什么这么设计。
 - 写完停下，等消化 / 提问，再继续。
 - 优先手写核心，少引框架。
 - 遇到设计选择，先问"pi 为什么这么做 / 换我该怎么做"，而不是直接查答案。
+- **每进入一个新阶段，先在 PLAN 里写出该阶段的详细拆解**（像阶段 0 / 1 这样），再开始第一步。
 
 ---
 
-## 9. 快速开始（随进度更新）
-
-> 目前还没有可运行的入口，阶段 0.6 后补充。
+## 10. 快速开始（随进度更新）
 
 运行环境：本机没有可用的 `python`（Windows 商店占位符），统一用 `uv`：
 
@@ -190,4 +207,8 @@ PYTHONPATH=src uv run python <script>
 ```
 
 阶段 0 已完成：`events → messages → provider → tools → agent loop → CLI`
-九项核心能力（#1~9）全部就位。下一阶段：Provider 抽象（接第二家厂商验证可插拔）。
+九项核心能力（#1~9）全部就位。
+
+阶段 1 已完成：OpenAI 兼容 + Anthropic 两个 provider，同一 `Agent` 跑出等价事件
+（`uv run python tests/provider_consistency.py`），核心代码零改动。
+下一阶段：工具系统（Pydantic schema、并行执行、审批门）。
