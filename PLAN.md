@@ -116,7 +116,7 @@ miniAgent/
 
 | 阶段 | 主题 | 学 pi 的什么 | 交付物 | 状态 |
 |---|---|---|---|---|
-| **0** | 最小循环 + 事件流 | `pi-agent-core` | 事件、消息模型、Provider(最小)、工具(最小)、循环、CLI | 🚧 进行中 |
+| **0** | 最小循环 + 事件流 | `pi-agent-core` | 事件、消息模型、Provider(最小)、工具(最小)、循环、CLI | ✅ 完成 |
 | **1** | Provider 抽象 | `pi-ai` | Provider Protocol，接第二家 provider 验证可插拔 | ⬜ |
 | **2** | 工具系统 | `RunTool` / `Approve` | 注册表、Pydantic schema、多工具并行、per-call approve、错误成事件 | ⬜ |
 | **3** | 上下文管理 | `CompactConversation` | Transcript、输出截断、compact、count_tokens、session、重试、取消 | ⬜ |
@@ -148,7 +148,7 @@ miniAgent/
 | **0.4** | `tools.py`（最小版）：1 个工具 + schema + 结果回填 + 失败成事件 | 工具契约 | ✅ 完成 |
 | **0.5a** | provider 支持 `tools` + 流式 **tool_call 分片累积** | 流式协议、厂商格式收敛到一处 | ✅ 完成 |
 | **0.5b** | `agent.py`：循环 + 工具执行 + 结果回填 + 终止条件 | 核心循环、最难的那块 | ✅ 完成 |
-| **0.6** | CLI 入口：把上面串起来，事件渲染到终端 | 事件驱动的好处 | ⬜ |
+| **0.6** | CLI 入口：把上面串起来，事件渲染到终端 | 事件驱动的好处 | ✅ 完成 |
 
 每步结束都**可运行/可验证**（0.2 可用单测验证序列化，0.3 可单独打一次模型）。
 
@@ -183,6 +183,11 @@ miniAgent/
 运行环境：本机没有可用的 `python`（Windows 商店占位符），统一用 `uv`：
 
 ```bash
+uv sync
+uv run miniagent "2*(3+4) 等于多少？"          # 需要 OPENAI_API_KEY
 uv run python -c "print('ok')"
 PYTHONPATH=src uv run python <script>
 ```
+
+阶段 0 已完成：`events → messages → provider → tools → agent loop → CLI`
+九项核心能力（#1~9）全部就位。下一阶段：Provider 抽象（接第二家厂商验证可插拔）。

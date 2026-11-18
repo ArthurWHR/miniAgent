@@ -19,5 +19,8 @@ server = [
     "uvicorn>=0.30",
 ]
 
+[project.scripts]
+miniagent = "miniagent.cli:main"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/miniagent"]
