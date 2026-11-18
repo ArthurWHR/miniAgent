@@ -10,10 +10,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import AsyncIterator, Protocol
+from typing import AsyncIterator, Protocol, Sequence
 
 from ..events import Event
 from ..messages import Message
+from ..tools import Tool
 
 
 class ProviderError(Exception):
@@ -49,4 +50,5 @@ class Provider(Protocol):
         messages: list[Message],
         *,
         config: ModelConfig,
+        tools: Sequence[Tool] | None = None,
     ) -> AsyncIterator[Event]: ...
