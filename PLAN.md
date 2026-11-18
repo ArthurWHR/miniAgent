@@ -118,7 +118,7 @@ miniAgent/
 |---|---|---|---|---|
 | **0** | 最小循环 + 事件流 | `pi-agent-core` | 事件、消息模型、Provider(最小)、工具(最小)、循环、CLI | ✅ 完成 |
 | **1** | Provider 抽象 | `pi-ai` | Provider Protocol，接第二家 provider 验证可插拔 | ✅ 完成 |
-| **2** | 工具系统 | `RunTool` / `Approve` | 注册表、Pydantic schema、多工具并行、per-call approve、错误成事件 | ⬜ |
+| **2** | 工具系统 | `RunTool` / `Approve` | 注册表、Pydantic schema、多工具并行、per-call approve、错误成事件 | 🚧 进行中 |
 | **3** | 上下文管理 | `CompactConversation` | Transcript、输出截断、compact、count_tokens、session、重试、取消 | ⬜ |
 | **4** | 可扩展性 | skills / extensions | 生命周期钩子、skills(md+yaml)、extensions 注册工具 | ⬜ |
 | **5** | Web 化 | `pi-tui` 的角色 | FastAPI + SSE 流式（含前端取消）+ 前端 | ⬜ |
@@ -155,7 +155,7 @@ miniAgent/
 
 ---
 
-## 7. 阶段 1 的详细拆解（当前）
+## 7. 阶段 1 的详细拆解（已完成）
 
 > 目标：证明「换模型不改核心」。新增 Anthropic provider，**核心文件零改动**。
 > 不需要真实的 Anthropic key：用 `httpx.MockTransport` 验证协议翻译即可；有 key 再实跑一次。
@@ -171,7 +171,37 @@ miniAgent/
 
 ---
 
-## 8. 关键设计决策与理由
+## 8. 阶段 2 的详细拆解（当前）
+
+> 目标：把工具从「手写字典」升级成「类型驱动的契约」，并补上并发与审批。
+> 核心验收：工具作者只写一个带类型注解的函数，不手写 JSON Schema。
+
+| 小步 | 做什么 | 学什么 | 状态 |
+|---|---|---|---|
+| **2.1** | Pydantic 声明式工具：`Tool.from_function()`（或 `@tool` 装饰器）从函数签名 + 类型注解 + docstring 自动生成 JSON Schema；`calculator` 迁移，行为不变 | schema 由类型驱动，手写与实现不再漂移 | ✅ 完成 |
+| **2.2** | 执行前参数校验：用 Pydantic 校验模型给的参数；失败 → `is_error=True` 结果块（含可读字段错误），handler 不执行 | 输入边界、错误成数据 | ⬜ |
+| **2.3** | 单轮多工具并行执行：同一轮多个 `tool_call` 用 `asyncio.gather` 并发；结果按 `tool_use_id` 对齐；单个失败不影响其他 | 并发、顺序保持、异常隔离 | ⬜ |
+| **2.4** | per-call 审批门：`Agent(approve=...)`，签名 `(tool, arguments) -> bool`；拒绝 → `is_error=True` 结果块；CLI 加 `--ask-approval` | 危险操作拦截、审批不打断事件流 | ⬜ |
+| **2.5** | 阶段验收：`tests/tools.py` 覆盖 schema 生成 / 校验失败 / 并行 / 审批拒绝；README + PLAN 更新 | 回归门禁 | ⬜ |
+
+**验收标准（2.5）**
+
+- 新增工具只需写函数和类型注解，schema 自动生成且与实现一致
+- 参数错误、审批拒绝都表现为结果块，Agent 循环不崩
+- 并行执行耗时 ≈ 最慢的那个工具，而不是逐个累加
+- 现有 CLI 与真实模型行为不变（calculator 仍可正常调用）
+
+**本阶段的预期决策**
+
+- schema 用 Pydantic 的 `model_json_schema()` 生成，统一去掉 `title`、补 `additionalProperties: false`
+- 校验失败的错误文本要短、可读 —— 它是给模型看的，不是给栈追踪看的
+- 并行只发生在**同一轮的多个工具之间**；轮与轮之间仍然串行（下一轮依赖上一轮结果）
+- 审批在"调用前"；工具内部的细粒度权限不归这里管
+- 默认策略：本阶段默认放行，阶段 6 再收紧为默认拒绝（对应 pi 的 `--no-approve`）
+
+---
+
+## 9. 关键设计决策与理由
 
 | 决策 | 选择 | 理由 |
 |---|---|---|
@@ -185,7 +215,7 @@ miniAgent/
 
 ---
 
-## 9. 学习方法约定
+## 10. 学习方法约定
 
 - 每次只推进**一个小步**，写完解释：对应 pi 的哪个思想、为什么这么设计。
 - 写完停下，等消化 / 提问，再继续。
@@ -195,7 +225,7 @@ miniAgent/
 
 ---
 
-## 10. 快速开始（随进度更新）
+## 11. 快速开始（随进度更新）
 
 运行环境：本机没有可用的 `python`（Windows 商店占位符），统一用 `uv`：
 
@@ -211,4 +241,5 @@ PYTHONPATH=src uv run python <script>
 
 阶段 1 已完成：OpenAI 兼容 + Anthropic 两个 provider，同一 `Agent` 跑出等价事件
 （`uv run python tests/provider_consistency.py`），核心代码零改动。
-下一阶段：工具系统（Pydantic schema、并行执行、审批门）。
+
+当前阶段 2：工具系统 —— Pydantic 自动 schema、参数校验、并行执行、审批门。

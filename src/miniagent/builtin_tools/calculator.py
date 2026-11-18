@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import ast
 import operator
-from typing import Any, Callable
+from typing import Annotated, Any, Callable
+
+from pydantic import Field
 
 from ..core.tools import Tool
 
@@ -61,8 +63,18 @@ def _evaluate(node: ast.AST) -> float | int:
     raise ValueError(f"不支持的表达式: {type(node).__name__}")
 
 
-def calculate(expr: str) -> str:
-    """计算一个数学表达式，返回结果字符串。"""
+def calculator(
+    expr: Annotated[
+        str,
+        Field(description="要计算的数学表达式，例如 '2*(3+4)'"),
+    ],
+) -> str:
+    """计算一个数学表达式，支持 + - * / // % ** 和括号。
+    例如 '2*(3+4)'、'(1+2)/3'。不要用它做非数学任务。
+
+    安全说明：参数由模型生成，因此这里用 AST 白名单求值，不调用 eval。
+    这段是给人类读者看的，工具描述只取第一段。
+    """
     try:
         tree = ast.parse(expr, mode="eval")
         value = _evaluate(tree)
@@ -75,22 +87,5 @@ def calculate(expr: str) -> str:
     return str(value)
 
 
-CALCULATOR = Tool(
-    name="calculator",
-    description=(
-        "计算一个数学表达式，支持 + - * / // % ** 和括号。"
-        "例如 '2*(3+4)'、'(1+2)/3'。不要用它做非数学任务。"
-    ),
-    parameters={
-        "type": "object",
-        "properties": {
-            "expr": {
-                "type": "string",
-                "description": "要计算的数学表达式，例如 '2*(3+4)'",
-            }
-        },
-        "required": ["expr"],
-        "additionalProperties": False,
-    },
-    handler=calculate,
-)
+# 函数名 → 工具名；docstring 第一段 → 工具描述；类型注解 → 参数 schema
+CALCULATOR = Tool.from_function(calculator)
